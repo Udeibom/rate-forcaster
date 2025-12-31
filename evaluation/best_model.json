@@ -1,0 +1,9 @@
+{
+    "model_name": "LinearRegression",
+    "metrics": {
+        "rmse_mean": 13.135517643909328,
+        "rmse_std": 13.21848089284964,
+        "mae_mean": 5.221540519414668,
+        "mae_std": 5.157833906420558
+    }
+}
