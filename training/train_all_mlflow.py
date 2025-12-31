@@ -1,11 +1,7 @@
-import os
-import json
-import joblib
 import numpy as np
 import pandas as pd
 import mlflow
 import mlflow.sklearn
-import mlflow.xgboost
 import xgboost as xgb
 
 from sklearn.linear_model import LinearRegression
@@ -15,7 +11,6 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 
 DATA_PATH = "data/processed/usdngn_clean.csv"
-MODEL_DIR = "models"
 EXPERIMENT_NAME = "fx_forecasting"
 
 
@@ -53,6 +48,7 @@ def get_models():
             n_jobs=-1
         ),
 
+        # 🔒 Sklearn API → must be logged with sklearn flavor
         "XGBoost": xgb.XGBRegressor(
             n_estimators=1000,
             learning_rate=0.05,
@@ -79,13 +75,10 @@ def evaluate_model(model, X, y):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
-        # ✅ NO early stopping (XGBoost 2.x safe)
         model.fit(X_train, y_train)
-
         preds = model.predict(X_val)
 
-        mse = mean_squared_error(y_val, preds)
-        rmse_scores.append(np.sqrt(mse))
+        rmse_scores.append(np.sqrt(mean_squared_error(y_val, preds)))
         mae_scores.append(mean_absolute_error(y_val, preds))
 
     return {
@@ -105,40 +98,37 @@ def main():
     X, y = load_and_prepare_data(DATA_PATH)
     models = get_models()
 
-    os.makedirs(MODEL_DIR, exist_ok=True)
-
     for name, model in models.items():
         with mlflow.start_run(run_name=name):
 
-            # Log model parameters
+            # Log parameters
             mlflow.log_params(model.get_params())
 
             # Train + evaluate
             metrics = evaluate_model(model, X, y)
             mlflow.log_metrics(metrics)
 
-            # Retrain on full data
+            # Retrain on full dataset
             model.fit(X, y)
 
-            # Save and log model artifact
-            model_path = f"{MODEL_DIR}/{name.lower()}.pkl"
-            joblib.dump(model, model_path)
-            mlflow.log_artifact(model_path)
+            # ✅ ONE SAFE WAY FOR ALL MODELS
+            mlflow.sklearn.log_model(
+                model,
+                artifact_path="model"
+            )
 
             # Log feature importance (XGBoost only)
             if name == "XGBoost":
-                importance = model.feature_importances_
-
                 fi_df = pd.DataFrame({
                     "feature": X.columns,
-                    "importance": importance
+                    "importance": model.feature_importances_
                 }).sort_values("importance", ascending=False)
 
                 fi_path = "xgboost_feature_importance.csv"
                 fi_df.to_csv(fi_path, index=False)
                 mlflow.log_artifact(fi_path)
 
-            print(f"{name} logged to MLflow")
+            print(f"{name} logged to MLflow successfully")
 
 
 if __name__ == "__main__":

@@ -26,3 +26,64 @@ Models will be evaluated using:
 - Only historical exchange rate data is used initially
 - Time-order must be preserved (no random shuffling)
 - System must support retraining and monitoring
+
+---
+
+## Project Structure
+
+```text
+fx-forecasting-ml/
+├── data/
+│   ├── raw/                 # Raw exchange rate data
+│   └── processed/           # Cleaned and versioned datasets
+├── features/
+│   ├── build_features.py    # Feature engineering logic
+│   └── pipeline.py          # Reusable feature pipeline
+├── training/
+│   ├── train_all_mlflow.py  # Unified training + experiment tracking
+│   └── register_best_model.py # Model registry & promotion
+├── evaluation/
+│   ├── *_metrics.json       # Stored evaluation metrics
+│   └── xgboost_feature_importance.csv
+├── models/
+│   └── *.pkl                # Trained model artifacts
+├── mlflow/                  # MLflow experiment tracking data
+└── README.md
+
+## Training Pipeline
+
+The model training pipeline is fully script-based and reproducible.
+
+### Steps
+
+1. **Feature Preparation**
+   - Lag features, rolling statistics, and calendar effects
+   - No future data leakage (time-aware splits)
+
+2. **Model Training**
+   - Linear Regression (baseline)
+   - Random Forest
+   - XGBoost with early stopping
+
+3. **Evaluation**
+   - Expanding-window time-series cross-validation
+   - Metrics: RMSE, MAE
+
+4. **Experiment Tracking**
+   - MLflow logs parameters, metrics, and artifacts
+   - Each model is tracked as a separate run
+
+5. **Model Selection**
+   - Best model selected automatically based on RMSE
+
+6. **Model Registry**
+   - Best-performing model registered in MLflow
+   - Promoted to Production stage with versioning
+
+### Reproducibility
+
+All training steps can be reproduced by running:
+
+```bash
+python training/train_all_mlflow.py
+python training/register_best_model.py
