@@ -19,7 +19,6 @@ from evaluation.backtesting import compare_models
 from evaluation.drift import rolling_error_detector, ks_drift_test
 from evaluation.report import generate_monitoring_report
 
-
 DATA_PATH = "data/processed/usdngn_clean.csv"
 MODEL_DIR = "models"
 ARTIFACTS_DIR = "artifacts/evaluation"
@@ -72,7 +71,10 @@ def evaluate_model(model, X, y):
     }, last_val
 
 
-def main():
+def train_all_models():
+    """
+    Train all models, save artifacts, return best model metrics for programmatic retraining.
+    """
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
@@ -83,7 +85,6 @@ def main():
 
     pipeline = FeaturePipeline()
     X, y = pipeline.fit_transform(raw_df)
-
     joblib.dump(pipeline, f"{MODEL_DIR}/feature_pipeline.pkl")
 
     # -----------------------------
@@ -93,13 +94,11 @@ def main():
     results, trained, val_sets = {}, {}, {}
 
     print("\nTraining models...\n")
-
     for name, model in models.items():
         trained_model, metrics, val_data = evaluate_model(model, X, y)
         results[name] = metrics
         trained[name] = trained_model
         val_sets[name] = val_data
-
         print(f"{name} RMSE: {metrics['rmse_mean']:.4f}")
 
     # -----------------------------
@@ -109,8 +108,6 @@ def main():
     best_model = trained[best_name]
 
     joblib.dump(best_model, f"{MODEL_DIR}/best_model.pkl")
-
-    # 🔹 Save feature columns used by the best model
     with open(FEATURE_COLUMNS_PATH, "w") as f:
         json.dump(list(X.columns), f, indent=4)
 
@@ -134,9 +131,7 @@ def main():
 
     errors = y_val.values - y_pred
     split = int(len(errors) * 0.7)
-
     ks_result = ks_drift_test(errors[:split], errors[split:])
-
     with open(f"{ARTIFACTS_DIR}/ks_drift_test.json", "w") as f:
         json.dump(ks_result, f, indent=4)
 
@@ -158,6 +153,23 @@ def main():
 
     print(f"\n✅ Best model: {best_name}")
     print(f"📦 Feature columns saved to {FEATURE_COLUMNS_PATH}")
+
+    # -----------------------------
+    # Return minimal metrics for retraining logic
+    # -----------------------------
+    return {
+        "rmse": float(final_metrics["rmse"]),
+        "mae": float(final_metrics["mae"]),
+    }
+
+
+def main():
+    """
+    CLI entrypoint: runs full training pipeline and prints final metrics.
+    """
+    metrics = train_all_models()
+    print("\n✅ Training complete. Best model metrics:")
+    print(metrics)
 
 
 if __name__ == "__main__":
