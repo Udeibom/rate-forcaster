@@ -2,23 +2,23 @@
 
 ## 1️⃣ Model Accuracy
 
-- RMSE: **39.23**
+- RMSE: **40.42**
 
-- MAE: **15.43**
+- MAE: **19.73**
 
-- MAPE: **1.20%**
+- MAPE: **1.52%**
 
 ## 2️⃣ Backtesting vs Naive Baseline
 
-- RMSE Improvement: **0.81%**
+- RMSE Improvement: **-1.92%**
 
-- MAE Improvement: **-5.00%**
+- MAE Improvement: **-33.91%**
 
 ## 3️⃣ Drift Monitoring
 
-- Drift flag rate: **11.08%**
+- Drift flag rate: **9.24%**
 
-- KS-test p-value: **0.0013**
+- KS-test p-value: **0.0003**
 
 ## 4️⃣ Model Health Assessment
 
