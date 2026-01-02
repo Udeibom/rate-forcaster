@@ -6,6 +6,12 @@ import joblib
 import json
 
 # ----------------------------
+# NEW: Database imports
+# ----------------------------
+from api.db import SessionLocal
+from api.models import PredictionLog
+
+# ----------------------------
 # Resolve paths safely
 # ----------------------------
 BASE_DIR = Path(__file__).resolve().parents[1]
@@ -44,6 +50,8 @@ def root():
 
 @app.post("/predict")
 def predict(req: PredictionRequest):
+    db = SessionLocal()
+
     try:
         # ----------------------------
         # Load historical raw data
@@ -66,7 +74,6 @@ def predict(req: PredictionRequest):
         # Feature engineering
         # ----------------------------
         X = pipeline.transform(df)
-
         X_latest = X.iloc[[-1]][FEATURE_COLUMNS]
 
         # ----------------------------
@@ -74,10 +81,27 @@ def predict(req: PredictionRequest):
         # ----------------------------
         prediction = model.predict(X_latest)[0]
 
+        # ----------------------------
+        # Log prediction to database
+        # ----------------------------
+        log = PredictionLog(
+            usd_ngn=req.USD_NGN,
+            eur_ngn=req.EUR_NGN,
+            gbp_ngn=req.GBP_NGN,
+            prediction=float(prediction),
+        )
+
+        db.add(log)
+        db.commit()
+
         return {
             "prediction": float(prediction),
             "date": req.Date,
         }
 
     except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+    finally:
+        db.close()
