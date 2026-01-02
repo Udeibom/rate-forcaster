@@ -282,4 +282,4 @@ POST http://127.0.0.1:8000/predict
 ## Author
 
 **Caleb Udeibom**  
-Computer Science Graduate | Aspiring ML Engineer  
+Computer Science Graduate | ML Engineer  
