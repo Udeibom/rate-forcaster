@@ -10,10 +10,28 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 
+from evaluation.metrics import (
+    evaluate_regression,
+    plot_residuals,
+    plot_predictions
+)
 
+from evaluation.dashboard import (
+    plot_actual_vs_predicted,
+    plot_error_over_time
+)
+
+from evaluation.backtesting import compare_models
+from evaluation.drift import rolling_error_detector, ks_drift_test
+
+
+# ---------------------------
+# Paths
+# ---------------------------
 DATA_PATH = "data/processed/usdngn_clean.csv"
 MODEL_DIR = "models"
 METRICS_DIR = "evaluation"
+ARTIFACTS_DIR = "artifacts/evaluation"
 
 
 # ---------------------------
@@ -23,14 +41,14 @@ def load_and_prepare_data(path):
     df = pd.read_csv(path, parse_dates=["Date"])
     df = df.sort_values("Date")
 
+    # Target: next-day USD/NGN
     df["target"] = df["USD_NGN"].shift(-1)
     df = df.dropna()
 
-    df = df.drop(columns=[
-        "Date",
-        "USD_Rate_Category"
-    ])
+    # Drop leakage / identifiers
+    df = df.drop(columns=["Date", "USD_Rate_Category"])
 
+    # Encode categoricals
     df = pd.get_dummies(df, columns=["Month", "Weekday"], drop_first=True)
 
     X = df.drop(columns=["target"])
@@ -68,37 +86,35 @@ def get_models():
 
 
 # ---------------------------
-# Training & evaluation
+# Cross-validation evaluation
 # ---------------------------
-def evaluate_model(name, model, X, y):
+def evaluate_model(model, X, y):
     tscv = TimeSeriesSplit(n_splits=5)
 
     rmse_scores = []
     mae_scores = []
+    last_val_data = None
 
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X), 1):
+    for train_idx, val_idx in tscv.split(X):
         X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
         y_train, y_val = y.iloc[train_idx], y.iloc[val_idx]
 
         model.fit(X_train, y_train)
-
         preds = model.predict(X_val)
 
-        mse = mean_squared_error(y_val, preds)
-        rmse = np.sqrt(mse)
-        mae = mean_absolute_error(y_val, preds)
+        rmse_scores.append(np.sqrt(mean_squared_error(y_val, preds)))
+        mae_scores.append(mean_absolute_error(y_val, preds))
 
-        rmse_scores.append(rmse)
-        mae_scores.append(mae)
+        last_val_data = (X_val, y_val, preds)
 
     metrics = {
         "rmse_mean": float(np.mean(rmse_scores)),
         "rmse_std": float(np.std(rmse_scores)),
         "mae_mean": float(np.mean(mae_scores)),
-        "mae_std": float(np.std(mae_scores))
+        "mae_std": float(np.std(mae_scores)),
     }
 
-    return model, metrics
+    return model, metrics, last_val_data
 
 
 # ---------------------------
@@ -107,19 +123,23 @@ def evaluate_model(name, model, X, y):
 def main():
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(METRICS_DIR, exist_ok=True)
+    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
 
     X, y = load_and_prepare_data(DATA_PATH)
     models = get_models()
 
     results = {}
     trained_models = {}
+    val_sets = {}
 
     print("\nTraining models...\n")
 
     for name, model in models.items():
-        trained_model, metrics = evaluate_model(name, model, X, y)
+        trained_model, metrics, val_data = evaluate_model(model, X, y)
+
         results[name] = metrics
         trained_models[name] = trained_model
+        val_sets[name] = val_data
 
         with open(f"{METRICS_DIR}/{name.lower()}_metrics.json", "w") as f:
             json.dump(metrics, f, indent=4)
@@ -127,7 +147,7 @@ def main():
         print(f"{name} RMSE: {metrics['rmse_mean']:.4f}")
 
     # ---------------------------
-    # Model selection
+    # Select best model
     # ---------------------------
     best_model_name = min(results, key=lambda k: results[k]["rmse_mean"])
     best_model = trained_models[best_model_name]
@@ -137,17 +157,73 @@ def main():
 
     with open(f"{METRICS_DIR}/best_model.json", "w") as f:
         json.dump(
-            {
-                "model_name": best_model_name,
-                "metrics": best_metrics
-            },
+            {"model_name": best_model_name, "metrics": best_metrics},
             f,
             indent=4
         )
 
-    print("\nBest model selected:")
-    print(f"Model: {best_model_name}")
-    print(f"RMSE: {best_metrics['rmse_mean']:.4f}")
+    # ---------------------------
+    # Final evaluation
+    # ---------------------------
+    X_val, y_val, y_pred = val_sets[best_model_name]
+
+    final_metrics = evaluate_regression(y_val, y_pred)
+
+    print("\nFinal Evaluation (Best Model)")
+    print(f"RMSE: {final_metrics['rmse']:.4f}")
+    print(f"MAE: {final_metrics['mae']:.4f}")
+    print(f"MAPE: {final_metrics['mape']:.2f}%")
+
+    # Core plots
+    plot_residuals(y_val, y_pred, ARTIFACTS_DIR)
+    plot_predictions(y_val, y_pred, ARTIFACTS_DIR)
+
+    # Dashboard plots
+    plot_actual_vs_predicted(y_val, y_pred, ARTIFACTS_DIR)
+    plot_error_over_time(y_val, y_pred, ARTIFACTS_DIR)
+
+    # ---------------------------
+    # Drift detection
+    # ---------------------------
+    print("\nRunning drift detection...")
+
+    # Rolling error drift
+    drift_df = rolling_error_detector(y_val, y_pred)
+    drift_df.to_csv(f"{ARTIFACTS_DIR}/drift_flags.csv", index=False)
+
+    # KS-test (early vs recent errors)
+    errors = y_val.values - y_pred
+    split = int(len(errors) * 0.7)
+
+    reference_errors = errors[:split]
+    recent_errors = errors[split:]
+
+    ks_result = ks_drift_test(reference_errors, recent_errors)
+
+    with open(f"{ARTIFACTS_DIR}/ks_drift_test.json", "w") as f:
+        json.dump(ks_result, f, indent=4)
+
+    print("\nKS Drift Test:")
+    print(f"KS Statistic: {ks_result['ks_statistic']:.4f}")
+    print(f"P-value: {ks_result['p_value']:.6f}")
+    print(f"Drift detected: {ks_result['drift_detected']}")
+
+    # ---------------------------
+    # Backtesting vs naive baseline
+    # ---------------------------
+    backtest_results = compare_models(y_val, y_pred)
+
+    backtest_df = pd.DataFrame([backtest_results])
+    backtest_df.to_csv(
+        f"{ARTIFACTS_DIR}/backtest_comparison.csv",
+        index=False
+    )
+
+    print("\nBacktesting Results (Model vs Naive)")
+    print(backtest_df.T)
+
+    print("\nEvaluation artifacts saved to:", ARTIFACTS_DIR)
+    print(f"Best model selected: {best_model_name}")
 
 
 if __name__ == "__main__":
