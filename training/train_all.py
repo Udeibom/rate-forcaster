@@ -23,6 +23,7 @@ from evaluation.dashboard import (
 
 from evaluation.backtesting import compare_models
 from evaluation.drift import rolling_error_detector, ks_drift_test
+from evaluation.report import generate_monitoring_report
 
 
 # ---------------------------
@@ -187,18 +188,13 @@ def main():
     # ---------------------------
     print("\nRunning drift detection...")
 
-    # Rolling error drift
     drift_df = rolling_error_detector(y_val, y_pred)
     drift_df.to_csv(f"{ARTIFACTS_DIR}/drift_flags.csv", index=False)
 
-    # KS-test (early vs recent errors)
     errors = y_val.values - y_pred
     split = int(len(errors) * 0.7)
 
-    reference_errors = errors[:split]
-    recent_errors = errors[split:]
-
-    ks_result = ks_drift_test(reference_errors, recent_errors)
+    ks_result = ks_drift_test(errors[:split], errors[split:])
 
     with open(f"{ARTIFACTS_DIR}/ks_drift_test.json", "w") as f:
         json.dump(ks_result, f, indent=4)
@@ -209,7 +205,7 @@ def main():
     print(f"Drift detected: {ks_result['drift_detected']}")
 
     # ---------------------------
-    # Backtesting vs naive baseline
+    # Backtesting
     # ---------------------------
     backtest_results = compare_models(y_val, y_pred)
 
@@ -221,6 +217,26 @@ def main():
 
     print("\nBacktesting Results (Model vs Naive)")
     print(backtest_df.T)
+
+    # ---------------------------
+    # Monitoring report
+    # ---------------------------
+    metrics_summary = {
+        "rmse": final_metrics["rmse"],
+        "mae": final_metrics["mae"],
+        "mape": final_metrics["mape"],
+    }
+
+    report = generate_monitoring_report(
+        metrics=metrics_summary,
+        backtest_csv=f"{ARTIFACTS_DIR}/backtest_comparison.csv",
+        drift_csv=f"{ARTIFACTS_DIR}/drift_flags.csv",
+        ks_result=ks_result,
+        output_path=f"{ARTIFACTS_DIR}/monitoring_report.md"
+    )
+
+    print("\nMonitoring Report Generated:")
+    print(report)
 
     print("\nEvaluation artifacts saved to:", ARTIFACTS_DIR)
     print(f"Best model selected: {best_model_name}")
